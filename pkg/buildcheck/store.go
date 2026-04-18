@@ -162,7 +162,32 @@ func NewMemoryStore() *MemoryStore {
 func (s *MemoryStore) Load(imageName string) (*Manifest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.manifests[imageName], nil
+	// Return a deep copy — the previous implementation returned the
+	// same pointer shared across callers, so two RecordBuild()
+	// invocations on the same image name raced when each mutated
+	// LastBuildAt / LastBuildTag / BuildArgs in place. See BUGFIXES
+	// Issue #19 for the stress-test that surfaced this.
+	return cloneManifest(s.manifests[imageName]), nil
+}
+
+// cloneManifest returns a deep copy of m, or nil if m is nil. The
+// FileHashes map and BuildArgs slice are copied so downstream mutations
+// do not alias the stored copy.
+func cloneManifest(m *Manifest) *Manifest {
+	if m == nil {
+		return nil
+	}
+	out := *m
+	if m.FileHashes != nil {
+		out.FileHashes = make(map[string]FileHash, len(m.FileHashes))
+		for k, v := range m.FileHashes {
+			out.FileHashes[k] = v
+		}
+	}
+	if m.BuildArgs != nil {
+		out.BuildArgs = append([]string(nil), m.BuildArgs...)
+	}
+	return &out
 }
 
 func (s *MemoryStore) Save(manifest *Manifest) error {
